@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora de Flexión</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#333"/>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Flexión Simple Rectangular</h1>
+            <p>según CIRSOC 201-05</p>
+        </header>
+
+        <main>
+            <div class="mode-selector">
+                <label><input type="radio" name="mode" value="dimensionamiento" checked> Dimensionamiento</label>
+                <label><input type="radio" name="mode" value="verificacion"> Verificación</label>
+            </div>
+
+            <div class="input-group">
+                <h2>Materiales</h2>
+                <div class="form-grid">
+                    <label for="fc">f'c (MPa)</label>
+                    <input type="number" id="fc" value="25">
+                    <label for="fy">fy (MPa)</label>
+                    <input type="number" id="fy" value="420">
+                </div>
+            </div>
+
+            <div class="input-group">
+                <h2>Geometría</h2>
+                <div class="form-grid">
+                    <label for="bw">Ancho bw (m)</label>
+                    <input type="number" id="bw" value="0.25">
+                    <label for="h">Altura h (m)</label>
+                    <input type="number" id="h" value="0.50">
+                    <label for="rec_t">Rec. Tracción (m)</label>
+                    <input type="number" id="rec_t" value="0.05">
+                    <label for="rec_c">Rec. Compresión (m)</label>
+                    <input type="number" id="rec_c" value="0.05">
+                </div>
+            </div>
+
+            <div class="input-group" id="solicitacion-group">
+                <h2>Solicitación</h2>
+                <div class="form-grid">
+                    <label for="mu">Momento Mu (kNm)</label>
+                    <input type="number" id="mu" value="150">
+                </div>
+            </div>
+            
+            <div class="input-group hidden" id="armaduras-group">
+                <h2>Armaduras</h2>
+                <div class="form-grid">
+                    <label for="as">As (cm²)</label>
+                    <input type="number" id="as" value="20">
+                    <label for="as_prime">A's (cm²)</label>
+                    <input type="number" id="as_prime" value="0">
+                </div>
+            </div>
+
+            <button id="calculate-btn">Calcular</button>
+
+            <div class="results-group">
+                <h2>Resultados</h2>
+                <pre id="results-output">Los resultados aparecerán aquí.</pre>
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
