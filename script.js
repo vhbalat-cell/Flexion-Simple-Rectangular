@@ -1,7 +1,7 @@
 // Service Worker Registration
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js')
+        navigator.service-worker.register('service-worker.js')
             .then(reg => console.log('Service worker registered.'))
             .catch(err => console.log('Service worker registration failed: ', err));
     });
@@ -61,14 +61,17 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
     const beta1 = fc <= 30 ? 0.85 : Math.max(0.65, 0.85 - 0.05 * (fc - 30) / 7);
     const f_star_c = 0.85 * fc;
 
+    // Calcular As_min en cm²
+    const As_min = (fc <= 31.36) ? (1.4 * bw * 100 * d * 100) / fy : (Math.sqrt(fc) * bw * 100 * d * 100) / (4 * fy);
+
     const mn_req = mu / phi;
     const f_star_c_kpa = f_star_c * 1000;
     
     const mn = mn_req / (f_star_c_kpa * bw * d ** 2);
     
     let ka;
-    if ((1 - 2 * mn) < 0) {
-        ka = 1.1;
+    if (mn < 0 || (1 - 2 * mn) < 0) { // Si el momento es muy grande o negativo
+        ka = 1.1; // Fuerza la condición de armadura doble
     } else {
        ka = 1 - Math.sqrt(1 - 2 * mn);
     }
@@ -76,17 +79,27 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
     const ka_max = 0.375 * beta1;
 
     if (ka <= ka_max) {
-        const As = (f_star_c * (bw * 100) * (ka * d * 100)) / fy;
-        const a = ka * d;
+        let As_calc = (f_star_c * (bw * 100) * (ka * d * 100)) / fy;
+        let As_final = As_calc;
+        let comentario = "Sección con armadura simple.";
+
+        if (As_calc < As_min) {
+            const As_4_3 = (4/3) * As_calc;
+            As_final = Math.min(As_min, As_4_3);
+            comentario = `Cuantía mínima rige. Se adopta el menor entre As,min (${As_min.toFixed(2)} cm²) y 4/3*As,calc (${As_4_3.toFixed(2)} cm²).`;
+        }
+        
+        const a = (As_final * fy) / (f_star_c * bw * 100);
         const c = a / beta1;
         const epsilon_s = c > 0 ? 0.003 * (d - c) / c : Infinity;
+        
         return {
-            "Armadura Tracción (As)": `${As.toFixed(2)} cm²`,
+            "Armadura Tracción (As)": `${As_final.toFixed(2)} cm²`,
             "Armadura Compresión (A's)": "0.00 cm²",
             "--- Detalles ---": "",
             "Eje Neutro (c)": `${c.toFixed(3)} m`,
             "Deformación Traccionada (εs)": epsilon_s.toFixed(5),
-            "Comentario": "Sección con armadura simple."
+            "Comentario": comentario
         };
     } else {
         const c = 0.375 * d;
@@ -127,56 +140,57 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
     const d = h - rec_t;
     if (d <= d_prime) return { error: "Altura útil 'd' debe ser mayor que rec. compresión 'd_prime'." };
     
-    const As = as_cm2 / 10000;
-    const A_prime_s = as_prime_cm2 / 10000;
     const Es = 200000.0;
     const beta1 = fc <= 30 ? 0.85 : Math.max(0.65, 0.85 - 0.05 * (fc - 30) / 7);
     const f_star_c = 0.85 * fc;
     const epsilon_y = fy / Es;
 
-    // 1. Verificar si la sección está sobre-armada
+    let As_to_use_cm2 = as_cm2;
+    let comentario_minima = "";
+
+    // *** LÓGICA DE CUANTÍA MÍNIMA PARA VERIFICACIÓN ***
+    const As_min = (fc <= 31.36) ? (1.4 * bw * 100 * d * 100) / fy : (Math.sqrt(fc) * bw * 100 * d * 100) / (4 * fy);
+    if (as_cm2 < As_min) {
+        As_to_use_cm2 = 0.75 * as_cm2;
+        comentario_minima = `ADVERTENCIA: As < As,min (${As_min.toFixed(2)} cm²). Capacidad calculada con 3/4 As.`;
+    }
+
+    const As = As_to_use_cm2 / 10000;
+    const A_prime_s = as_prime_cm2 / 10000;
+    
     const c_max = 0.375 * d;
     const a_max = beta1 * c_max;
     const eps_prime_s_max = c_max > 0 ? 0.003 * (c_max - d_prime) / c_max : 0;
     const f_prime_s_max = Math.min(fy, Math.max(0, eps_prime_s_max * Es));
-
     const Cc_max_N = (f_star_c * 1e6) * bw * a_max;
     const Cs_prime_max_N = A_prime_s * (f_prime_s_max * 1e6);
     const C_total_max_N = Cc_max_N + Cs_prime_max_N;
     const T_provista_N = As * (fy * 1e6);
 
-    let c, a, epsilon_s, f_prime_s, comentario;
+    let c, a, epsilon_s, f_prime_s, comentario_ductilidad;
 
     if (T_provista_N > C_total_max_N) {
-        // --- CASO SOBRE-ARMADO ---
         c = c_max;
         a = a_max;
         epsilon_s = 0.005;
         f_prime_s = f_prime_s_max;
-        comentario = "ADVERTENCIA: Sección sobre-armada. Capacidad limitada por ductilidad (c=0.375d). Acero en tracción excedente despreciado.";
-
+        comentario_ductilidad = "ADVERTENCIA: Sección sobre-armada. Capacidad limitada por ductilidad (c=0.375d).";
     } else {
-        // --- CASO NORMAL (NO SOBRE-ARMADO) ---
-        comentario = "La sección cumple los límites de ductilidad.";
-        const T_N = As * fy; // en MN
-        const c_hip1 = ((T_N - (A_prime_s * fy)) / (f_star_c * bw * beta1));
+        comentario_ductilidad = "La sección cumple los límites de ductilidad.";
+        const T_N_calc = As * fy; // en MN
+        const c_hip1 = ((T_N_calc - (A_prime_s * fy)) / (f_star_c * bw * beta1));
         const eps_prime_s_hip1 = c_hip1 > 0 ? 0.003 * (c_hip1 - d_prime) / c_hip1 : -Infinity;
 
         if (eps_prime_s_hip1 >= epsilon_y && as_prime_cm2 > 0) {
             c = c_hip1;
         } else {
             const A_coeff = f_star_c * bw * beta1;
-            const B_coeff = A_prime_s * Es * 0.003 - T_N;
+            const B_coeff = A_prime_s * Es * 0.003 - T_N_calc;
             const C_coeff = -A_prime_s * Es * 0.003 * d_prime;
             const discriminant = B_coeff ** 2 - 4 * A_coeff * C_coeff;
             if (discriminant < 0) return { error: "Error: Discriminante negativo." };
             c = (-B_coeff + Math.sqrt(discriminant)) / (2 * A_coeff);
         }
-
-        if (c > d) { // Doble chequeo por si acaso
-            return { error: `Sección sobre-armada (c=${c.toFixed(3)}m > d=${d.toFixed(3)}m). Falla frágil.`};
-        }
-        
         a = beta1 * c;
         epsilon_s = c > 0 ? 0.003 * (d - c) / c : Infinity;
         const eps_prime_s_final = c > 0 ? 0.003 * (c - d_prime) / c : 0;
@@ -199,6 +213,8 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
     const Mn = Mn_c + Mn_s;
     const phi_Mn = phi * Mn;
 
+    const comentario_final = [comentario_ductilidad, comentario_minima].filter(Boolean).join(' ');
+
     return {
         "Capacidad de Diseño (ΦMn)": `${phi_Mn.toFixed(2)} kNm`,
         "--- Detalles ---": "",
@@ -208,7 +224,7 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
         "Deformación Traccionada (εs)": epsilon_s.toFixed(5),
         "Deformación Comprimida (ε's)": (f_prime_s / Es).toFixed(5),
         "Tensión Comprimida (f's)": `${f_prime_s.toFixed(1)} MPa`,
-        "Comentario": comentario
+        "Comentario": comentario_final || "Cálculo exitoso."
     };
 }
 
