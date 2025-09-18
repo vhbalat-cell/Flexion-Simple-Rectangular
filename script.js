@@ -1,7 +1,6 @@
 // Service Worker Registration
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        // CORRECCIÓN: Se quita la barra inicial para que la ruta sea relativa al repositorio
         navigator.serviceWorker.register('service-worker.js')
             .then(reg => console.log('Service worker registered.'))
             .catch(err => console.log('Service worker registration failed: ', err));
@@ -32,7 +31,6 @@ modeRadios.forEach(radio => {
 calculateBtn.addEventListener('click', () => {
     const mode = document.querySelector('input[name="mode"]:checked').value;
     
-    // Get shared inputs
     const fc = parseFloat(document.getElementById('fc').value);
     const fy = parseFloat(document.getElementById('fy').value);
     const bw = parseFloat(document.getElementById('bw').value);
@@ -68,10 +66,9 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
     
     const mn = mn_req / (f_star_c_kpa * bw * d ** 2);
     
-    // CORRECCIÓN: Se declara 'ka' fuera del bloque if/else para que esté disponible después.
     let ka;
     if ((1 - 2 * mn) < 0) {
-        ka = 1.1; // Fuerza la condición de armadura doble para momentos muy grandes
+        ka = 1.1;
     } else {
        ka = 1 - Math.sqrt(1 - 2 * mn);
     }
@@ -137,31 +134,54 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
     const f_star_c = 0.85 * fc;
     const epsilon_y = fy / Es;
 
-    let c, f_prime_s;
+    // 1. Verificar si la sección está sobre-armada
+    const c_max = 0.375 * d;
+    const a_max = beta1 * c_max;
+    const eps_prime_s_max = c_max > 0 ? 0.003 * (c_max - d_prime) / c_max : 0;
+    const f_prime_s_max = Math.min(fy, Math.max(0, eps_prime_s_max * Es));
 
-    if (A_prime_s < 1e-9) { // No hay armadura de compresión
-        const a = (As * fy) / (f_star_c * bw);
-        c = a / beta1;
-    } else { // Hay armadura de compresión
-        const c_hip1 = ((As - A_prime_s) * fy) / (f_star_c * bw * beta1);
+    const Cc_max_N = (f_star_c * 1e6) * bw * a_max;
+    const Cs_prime_max_N = A_prime_s * (f_prime_s_max * 1e6);
+    const C_total_max_N = Cc_max_N + Cs_prime_max_N;
+    const T_provista_N = As * (fy * 1e6);
+
+    let c, a, epsilon_s, f_prime_s, comentario;
+
+    if (T_provista_N > C_total_max_N) {
+        // --- CASO SOBRE-ARMADO ---
+        c = c_max;
+        a = a_max;
+        epsilon_s = 0.005;
+        f_prime_s = f_prime_s_max;
+        comentario = "ADVERTENCIA: Sección sobre-armada. Capacidad limitada por ductilidad (c=0.375d). Acero en tracción excedente despreciado.";
+
+    } else {
+        // --- CASO NORMAL (NO SOBRE-ARMADO) ---
+        comentario = "La sección cumple los límites de ductilidad.";
+        const T_N = As * fy; // en MN
+        const c_hip1 = ((T_N - (A_prime_s * fy)) / (f_star_c * bw * beta1));
         const eps_prime_s_hip1 = c_hip1 > 0 ? 0.003 * (c_hip1 - d_prime) / c_hip1 : -Infinity;
 
-        if (eps_prime_s_hip1 >= epsilon_y) {
+        if (eps_prime_s_hip1 >= epsilon_y && as_prime_cm2 > 0) {
             c = c_hip1;
         } else {
             const A_coeff = f_star_c * bw * beta1;
-            const B_coeff = A_prime_s * Es * 0.003 - As * fy;
+            const B_coeff = A_prime_s * Es * 0.003 - T_N;
             const C_coeff = -A_prime_s * Es * 0.003 * d_prime;
             const discriminant = B_coeff ** 2 - 4 * A_coeff * C_coeff;
             if (discriminant < 0) return { error: "Error: Discriminante negativo." };
             c = (-B_coeff + Math.sqrt(discriminant)) / (2 * A_coeff);
         }
+
+        if (c > d) { // Doble chequeo por si acaso
+            return { error: `Sección sobre-armada (c=${c.toFixed(3)}m > d=${d.toFixed(3)}m). Falla frágil.`};
+        }
+        
+        a = beta1 * c;
+        epsilon_s = c > 0 ? 0.003 * (d - c) / c : Infinity;
+        const eps_prime_s_final = c > 0 ? 0.003 * (c - d_prime) / c : 0;
+        f_prime_s = Math.min(fy, Math.max(0, eps_prime_s_final * Es));
     }
-    
-    const a = beta1 * c;
-    const epsilon_s = c > 0 ? 0.003 * (d - c) / c : Infinity;
-    const eps_prime_s_final = c > 0 ? 0.003 * (c - d_prime) / c : 0;
-    f_prime_s = Math.min(fy, Math.max(0, eps_prime_s_final * Es));
     
     let phi;
     if (epsilon_s >= 0.005) {
@@ -174,7 +194,6 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
     
     const Cc_kN = (f_star_c * 1000 * bw * a);
     const C_prime_s_kN = (A_prime_s * f_prime_s * 1000);
-    
     const Mn_c = Cc_kN * (d - a / 2);
     const Mn_s = C_prime_s_kN * (d - d_prime);
     const Mn = Mn_c + Mn_s;
@@ -188,7 +207,8 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
         "Eje Neutro (c)": `${c.toFixed(3)} m`,
         "Deformación Traccionada (εs)": epsilon_s.toFixed(5),
         "Deformación Comprimida (ε's)": (f_prime_s / Es).toFixed(5),
-        "Tensión Comprimida (f's)": `${f_prime_s.toFixed(1)} MPa`
+        "Tensión Comprimida (f's)": `${f_prime_s.toFixed(1)} MPa`,
+        "Comentario": comentario
     };
 }
 
