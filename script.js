@@ -1,7 +1,8 @@
 // Service Worker Registration
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/service-worker.js')
+        // CORRECCIÓN: Se quita la barra inicial para que la ruta sea relativa al repositorio
+        navigator.serviceWorker.register('service-worker.js')
             .then(reg => console.log('Service worker registered.'))
             .catch(err => console.log('Service worker registration failed: ', err));
     });
@@ -67,10 +68,12 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
     
     const mn = mn_req / (f_star_c_kpa * bw * d ** 2);
     
-    if ((1 - 2 * mn) < 0) { // Will require compression steel
-        const ka = 1.1; // Force condition for double reinforcement
+    // CORRECCIÓN: Se declara 'ka' fuera del bloque if/else para que esté disponible después.
+    let ka;
+    if ((1 - 2 * mn) < 0) {
+        ka = 1.1; // Fuerza la condición de armadura doble para momentos muy grandes
     } else {
-       const ka = 1 - Math.sqrt(1 - 2 * mn);
+       ka = 1 - Math.sqrt(1 - 2 * mn);
     }
      
     const ka_max = 0.375 * beta1;
@@ -105,7 +108,7 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
         const A_prime_s_m2 = delta_Mn / (f_prime_s * 1000 * (d - d_prime));
         const A_prime_s = A_prime_s_m2 * 10000;
         
-        const Cc_N = f_star_c * (bw * 1000) * a;
+        const Cc_N = f_star_c * (bw * 1000) * a * 1000;
         const C_prime_s_N = A_prime_s_m2 * f_prime_s * 1e6;
         const As_m2 = (Cc_N + C_prime_s_N) / (fy * 1e6);
         const As = As_m2 * 10000;
@@ -136,25 +139,29 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
 
     let c, f_prime_s;
 
-    const c_hip1 = ((As - A_prime_s) * fy) / (f_star_c * bw * beta1);
-    const eps_prime_s_hip1 = c_hip1 > 0 ? 0.003 * (c_hip1 - d_prime) / c_hip1 : -Infinity;
+    if (A_prime_s < 1e-9) { // No hay armadura de compresión
+        const a = (As * fy) / (f_star_c * bw);
+        c = a / beta1;
+    } else { // Hay armadura de compresión
+        const c_hip1 = ((As - A_prime_s) * fy) / (f_star_c * bw * beta1);
+        const eps_prime_s_hip1 = c_hip1 > 0 ? 0.003 * (c_hip1 - d_prime) / c_hip1 : -Infinity;
 
-    if (eps_prime_s_hip1 >= epsilon_y) {
-        c = c_hip1;
-        f_prime_s = fy;
-    } else {
-        const A_coeff = f_star_c * bw * beta1;
-        const B_coeff = A_prime_s * Es * 0.003 - As * fy;
-        const C_coeff = -A_prime_s * Es * 0.003 * d_prime;
-        const discriminant = B_coeff ** 2 - 4 * A_coeff * C_coeff;
-        if (discriminant < 0) return { error: "Error: Discriminante negativo." };
-        c = (-B_coeff + Math.sqrt(discriminant)) / (2 * A_coeff);
-        const eps_prime_s = c > 0 ? 0.003 * (c - d_prime) / c : 0;
-        f_prime_s = eps_prime_s * Es;
+        if (eps_prime_s_hip1 >= epsilon_y) {
+            c = c_hip1;
+        } else {
+            const A_coeff = f_star_c * bw * beta1;
+            const B_coeff = A_prime_s * Es * 0.003 - As * fy;
+            const C_coeff = -A_prime_s * Es * 0.003 * d_prime;
+            const discriminant = B_coeff ** 2 - 4 * A_coeff * C_coeff;
+            if (discriminant < 0) return { error: "Error: Discriminante negativo." };
+            c = (-B_coeff + Math.sqrt(discriminant)) / (2 * A_coeff);
+        }
     }
-
+    
     const a = beta1 * c;
     const epsilon_s = c > 0 ? 0.003 * (d - c) / c : Infinity;
+    const eps_prime_s_final = c > 0 ? 0.003 * (c - d_prime) / c : 0;
+    f_prime_s = Math.min(fy, Math.max(0, eps_prime_s_final * Es));
     
     let phi;
     if (epsilon_s >= 0.005) {
@@ -187,8 +194,12 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
 
 function displayResults(results) {
     let output = "";
-    for (const key in results) {
-        output += `${key.padEnd(30, ' ')} ${results[key]}\n`;
+    if (results.error) {
+        output = `ERROR: ${results.error}`;
+    } else {
+        for (const key in results) {
+            output += `${key.padEnd(30, ' ')} ${results[key]}\n`;
+        }
     }
     resultsOutput.textContent = output;
 }
