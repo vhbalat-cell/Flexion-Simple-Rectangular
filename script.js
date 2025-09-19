@@ -61,6 +61,8 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
     const beta1 = fc <= 30 ? 0.85 : Math.max(0.65, 0.85 - 0.05 * (fc - 30) / 7);
     const f_star_c = 0.85 * fc;
 
+    const As_min = (fc <= 31.36) ? (1.4 * bw * 100 * d * 100) / fy : (Math.sqrt(fc) * bw * 100 * d * 100) / (4 * fy);
+
     const mn_req = mu / phi;
     const f_star_c_kpa = f_star_c * 1000;
     
@@ -75,30 +77,32 @@ function dimensionar(fc, fy, bw, h, rec_t, d_prime, mu) {
      
     const ka_max = 0.375 * beta1;
 
-    // --- LÓGICA DE DIMENSIONAMIENTO Y PRESENTACIÓN MEJORADA ---
     if (ka <= ka_max) {
         const As_calc = (f_star_c * (bw * 100) * (ka * d * 100)) / fy;
-        const a_calc = (As_calc * 100 * fy) / (f_star_c * (bw * 1000)); // 'a' en metros
-        const c_calc = a_calc / beta1;
-        const epsilon_s_calc = c_calc > 0 ? 0.003 * (d - c_calc) / c_calc : Infinity;
-        
-        let results = {
-            "Armadura de Cálculo (As)": `${As_calc.toFixed(2)} cm²`,
-            "Armadura Compresión (A's)": "0.00 cm²",
-            "--- Detalles Físicos (s/cálculo) ---": "",
-            "Eje Neutro (c)": `${c_calc.toFixed(3)} m`,
-            "Deformación Traccionada (εs)": epsilon_s_calc.toFixed(5),
-        };
+        let As_final = As_calc;
+        let comentario = "Sección con armadura simple.";
 
-        const As_min = (fc <= 31.36) ? (1.4 * bw * 100 * d * 100) / fy : (Math.sqrt(fc) * bw * 100 * d * 100) / (4 * fy);
+        let results = {};
+
         if (As_calc < As_min) {
             const As_4_3 = (4/3) * As_calc;
-            const As_final = Math.min(As_min, As_4_3);
+            As_final = Math.min(As_min, As_4_3);
             results["--- Prescripción Reglamentaria ---"] = "";
             results["As Mínima (s/norma)"] = `${As_min.toFixed(2)} cm²`;
             results["As (4/3 del cálculo)"] = `${As_4_3.toFixed(2)} cm²`;
             results["ARMADURA ADOPTADA (menor)"] = `${As_final.toFixed(2)} cm²`;
+        } else {
+            results["Armadura Tracción (As)"] = `${As_final.toFixed(2)} cm²`;
         }
+        
+        const a_calc = (As_calc * 100 * fy) / (f_star_c * (bw * 1000));
+        const c_calc = a_calc / beta1;
+        const epsilon_s_calc = c_calc > 0 ? 0.003 * (d - c_calc) / c_calc : Infinity;
+        
+        results["Armadura Compresión (A's)"] = "0.00 cm²";
+        results["--- Detalles Físicos (s/cálculo) ---"] = "";
+        results["Eje Neutro (c)"] = `${c_calc.toFixed(3)} m`;
+        results["Deformación Traccionada (εs)"] = epsilon_s_calc.toFixed(5);
         
         return results;
 
@@ -154,4 +158,90 @@ function verificar(fc, fy, bw, h, as_cm2, as_prime_cm2, rec_t, d_prime) {
         comentario_minima = `ADVERTENCIA: As < As,min (${As_min.toFixed(2)} cm²). Capacidad calculada con 3/4 As.`;
     }
 
-    const As = As_to_use_cm
+    const As = As_to_use_cm2 / 10000;
+    const A_prime_s = as_prime_cm2 / 10000;
+    
+    const c_max = 0.375 * d;
+    const a_max = beta1 * c_max;
+    const eps_prime_s_max = c_max > 0 ? 0.003 * (c_max - d_prime) / c_max : 0;
+    const f_prime_s_max = Math.min(fy, Math.max(0, eps_prime_s_max * Es));
+    const Cc_max_N = (f_star_c * 1e6) * bw * a_max;
+    const Cs_prime_max_N = A_prime_s * (f_prime_s_max * 1e6);
+    const C_total_max_N = Cc_max_N + Cs_prime_max_N;
+    const T_provista_N = As * (fy * 1e6);
+
+    let c, a, epsilon_s, f_prime_s, comentario_ductilidad;
+
+    if (T_provista_N > C_total_max_N) {
+        c = c_max;
+        a = a_max;
+        epsilon_s = 0.005;
+        f_prime_s = f_prime_s_max;
+        comentario_ductilidad = "ADVERTENCIA: Sección sobre-armada. Capacidad limitada por ductilidad (c=0.375d).";
+    } else {
+        comentario_ductilidad = "La sección cumple los límites de ductilidad.";
+        const T_N_calc = As * fy; // en MN
+        const c_hip1 = ((T_N_calc - (A_prime_s * fy)) / (f_star_c * bw * beta1));
+        const eps_prime_s_hip1 = c_hip1 > 0 ? 0.003 * (c_hip1 - d_prime) / c_hip1 : -Infinity;
+
+        if (eps_prime_s_hip1 >= epsilon_y && as_prime_cm2 > 0) {
+            c = c_hip1;
+        } else {
+            const A_coeff = f_star_c * bw * beta1;
+            const B_coeff = A_prime_s * Es * 0.003 - T_N_calc;
+            const C_coeff = -A_prime_s * Es * 0.003 * d_prime;
+            const discriminant = B_coeff ** 2 - 4 * A_coeff * C_coeff;
+            if (discriminant < 0) return { error: "Error: Discriminante negativo." };
+            c = (-B_coeff + Math.sqrt(discriminant)) / (2 * A_coeff);
+        }
+        a = beta1 * c;
+        epsilon_s = c > 0 ? 0.003 * (d - c) / c : Infinity;
+        const eps_prime_s_final = c > 0 ? 0.003 * (c - d_prime) / c : 0;
+        f_prime_s = Math.min(fy, Math.max(0, eps_prime_s_final * Es));
+    }
+    
+    let phi;
+    if (epsilon_s >= 0.005) {
+        phi = 0.90;
+    } else if (epsilon_s > epsilon_y) {
+        phi = 0.65 + 0.25 * (epsilon_s - epsilon_y) / (0.005 - epsilon_y);
+    } else {
+        phi = 0.65;
+    }
+    
+    const Cc_kN = (f_star_c * 1000 * bw * a);
+    const C_prime_s_kN = (A_prime_s * f_prime_s * 1000);
+    const Mn_c = Cc_kN * (d - a / 2);
+    const Mn_s = C_prime_s_kN * (d - d_prime);
+    const Mn = Mn_c + Mn_s;
+    const phi_Mn = phi * Mn;
+
+    const comentario_final = [comentario_ductilidad, comentario_minima].filter(Boolean).join(' ');
+
+    return {
+        "Capacidad de Diseño (ΦMn)": `${phi_Mn.toFixed(2)} kNm`,
+        "--- Detalles ---": "",
+        "Momento Nominal (Mn)": `${Mn.toFixed(2)} kNm`,
+        "Factor de Reducción (Φ)": phi.toFixed(2),
+        "Eje Neutro (c)": `${c.toFixed(3)} m`,
+        "Deformación Traccionada (εs)": epsilon_s.toFixed(5),
+        "Deformación Comprimida (ε's)": (f_prime_s / Es).toFixed(5),
+        "Tensión Comprimida (f's)": `${f_prime_s.toFixed(1)} MPa`,
+        "Comentario": comentario_final || "Cálculo exitoso."
+    };
+}
+
+function displayResults(results) {
+    let output = "";
+    if (results.error) {
+        output = `ERROR: ${results.error}`;
+    } else {
+        for (const key in results) {
+            output += `${key.padEnd(35, ' ')} ${results[key]}\n`;
+        }
+    }
+    resultsOutput.textContent = output;
+}
+
+// Initial setup to match radio button
+document.querySelector('input[name="mode"]:checked').dispatchEvent(new Event('change'));
